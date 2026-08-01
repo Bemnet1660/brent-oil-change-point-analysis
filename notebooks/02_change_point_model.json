@@ -1,0 +1,215 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# 02 - Bayesian Change Point Model\n",
+    "\n",
+    "This notebook builds and fits a Bayesian change point model using PyMC to detect structural breaks in Brent oil prices.\n",
+    "\n",
+    "Model Structure:\n",
+    "- tau: Change point index (DiscreteUniform prior)\n",
+    "- mu_1: Mean price before change point (Normal prior)\n",
+    "- mu_2: Mean price after change point (Normal prior)\n",
+    "- sigma: Shared standard deviation (HalfCauchy prior)\n",
+    "- likelihood: Normal distribution with mean switching at tau\n",
+    "\n",
+    "Outputs:\n",
+    "- Posterior distribution of change point location\n",
+    "- Before/after mean estimates\n",
+    "- Quantified impact (percent change)\n",
+    "- Convergence diagnostics"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import sys\n",
+    "import pandas as pd\n",
+    "import numpy as np\n",
+    "import matplotlib.pyplot as plt\n",
+    "import seaborn as sns\n",
+    "import pymc as pm\n",
+    "import arviz as az\n",
+    "\n",
+    "# Add src to path for custom modules\n",
+    "sys.path.append('../')\n",
+    "from src.models.change_point import BayesianChangePointModel\n",
+    "\n",
+    "print(\"All libraries imported.\")\n",
+    "print(f\"PyMC version: {pm.version}\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Load data\n",
+    "df = pd.read_csv('../data/processed/cleaned_oil_prices.csv', parse_dates=['Date'])\n",
+    "print(f\"Loaded {len(df)} records\")\n",
+    "print(f\"Date range: {df['Date'].min()} to {df['Date'].max()}\")\n",
+    "df.head()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Initialize model with log transformation\n",
+    "model = BayesianChangePointModel(df, log_transform=True)\n",
+    "print(\"Model initialized.\")\n",
+    "print(f\"Using log transformation: {model.log_transform}\")\n",
+    "print(f\"Data shape: {model.price_values.shape}\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Build the model\n",
+    "model.build_model()\n",
+    "print(\"Model built successfully!\")\n",
+    "print(model.model)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Fit the model (MCMC sampling)\n",
+    "print(\"Starting MCMC sampling...\")\n",
+    "print(\"This may take several minutes.\")\n",
+    "\n",
+    "trace = model.fit(\n",
+    "    draws=2000,\n",
+    "    tune=1000,\n",
+    "    chains=4,\n",
+    "    cores=4,\n",
+    "    target_accept=0.95\n",
+    ")\n",
+    "\n",
+    "print(\"\\n✅ MCMC sampling complete!\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Check convergence diagnostics\n",
+    "summary = model.check_convergence()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Get change point date\n",
+    "cp_date = model.get_change_point_date()\n",
+    "print(f\"\\n📍 Detected Change Point: {cp_date.date()}\")\n",
+    "cp_idx = df[df['Date'] == cp_date].index[0]\n",
+    "print(f\"Index: {cp_idx} out of {len(df)} total observations\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Quantify impact\n",
+    "impact = model.get_impact_estimate()\n",
+    "\n",
+    "print(\"\\n\" + \"=\" * 60)\n",
+    "print(\"IMPACT ESTIMATE\")\n",
+    "print(\"=\" * 60)\n",
+"print(f\"Before change point mean price: ${impact['before_mean']:.2f}\")\n",
+    "print(f\"After change point mean price:  ${impact['after_mean']:.2f}\")\n",
+    "print(f\"Percent change: {impact['percent_change']:.2f}%\")\n",
+    "print(f\"Direction: {impact['direction']}\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Visualize results\n",
+    "model.plot_results(save_path='../reports/figures/change_point_posterior.png')\n",
+    "print(\"✅ Figure saved to: reports/figures/change_point_posterior.png\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Save change point results\n",
+    "cp_results = pd.DataFrame([{\n",
+    "    'change_point_date': cp_date,\n",
+    "    'before_mean': impact['before_mean'],\n",
+    "    'after_mean': impact['after_mean'],\n",
+    "    'percent_change': impact['percent_change'],\n",
+    "    'direction': impact['direction']\n",
+    "}])\n",
+    "\n",
+    "cp_results.to_csv('../data/processed/change_point_results.csv', index=False)\n",
+    "print(\"✅ Change point results saved to: data/processed/change_point_results.csv\")\n",
+    "cp_results"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Additional: Posterior summary for tau\n",
+    "tau_posterior = trace.posterior['tau'].values.flatten()\n",
+    "print(\"\\nPosterior statistics for tau (change point index):\")\n",
+    "print(f\"Mean: {np.mean(tau_posterior):.0f}\")\n",
+    "print(f\"Median: {np.median(tau_posterior):.0f}\")\n",
+    "print(f\"Std: {np.std(tau_posterior):.0f}\")\n",
+    "print(f\"95% HDI: [{np.percentile(tau_posterior, 2.5):.0f}, {np.percentile(tau_posterior, 97.5):.0f}]\")"
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3 (ipykernel)",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.9.0"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 4
+}
